@@ -11,7 +11,7 @@ import orderRoutes from "./routes/orderRoutes.js";
 import paymentRoutes from "./routes/paymentRoutes.js";
 import newsletterRoutes from "./routes/newsletterRoutes.js";
 import contactRoutes from "./routes/contactRoutes.js";
-import userRoutes from "./routes/userRoutes.js"; // <-- new
+import userRoutes from "./routes/userRoutes.js";
 
 // Load ENV first
 dotenv.config();
@@ -19,11 +19,31 @@ dotenv.config();
 // Initialize app
 const app = express();
 
-// Database & Cloudinary Connections
-connectDB();
-connectCloudinary();
+// Global error handlers (important for Railway)
+process.on('uncaughtException', (err) => {
+  console.error('❌ UNCAUGHT EXCEPTION:', err);
+  process.exit(1);
+});
 
-// --- CORS CONFIGURATION (STABLE & DYNAMIC) ---
+process.on('unhandledRejection', (err) => {
+  console.error('❌ UNHANDLED REJECTION:', err);
+  process.exit(1);
+});
+
+// Database & Cloudinary Connections (with error handling)
+const startConnections = async () => {
+  try {
+    await connectDB();
+    await connectCloudinary();
+    console.log('✅ Database and Cloudinary connected');
+  } catch (err) {
+    console.error('❌ Failed to connect to DB/Cloudinary:', err);
+    process.exit(1);
+  }
+};
+startConnections();
+
+// --- CORS CONFIGURATION ---
 const allowedOriginsEnv = process.env.ALLOWED_ORIGINS;
 const devLocalOrigins = ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175'];
 
@@ -38,20 +58,14 @@ if (allowedOriginsEnv) {
 }
 
 allowedOrigins = [...new Set(allowedOrigins)];
-
-// Vercel subdomains ko handle karne ke liye Regex
 const vercelRegex = /\.vercel\.app$/;
 
 console.log('✅ Allowed CORS origins:', allowedOrigins);
 
 app.use(cors({
   origin: function (origin, callback) {
-    // 1. Allow requests with no origin (Postman, etc.)
     if (!origin) return callback(null, true);
-
-    // 2. Check if origin is in the allowed list OR matches Vercel pattern
     const isAllowed = allowedOrigins.includes(origin) || vercelRegex.test(origin);
-
     if (isAllowed) {
       callback(null, true);
     } else {
@@ -63,15 +77,9 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
-// --- END CORS ---
 
-// Body parser with raw body for webhook verification
-app.use(express.json({
-  limit: '50mb',
-  verify: (req, res, buf) => {
-    req.rawBody = buf;
-  }
-}));
+// Body parser
+app.use(express.json({ limit: '50mb', verify: (req, res, buf) => { req.rawBody = buf; } }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // Routes
@@ -81,35 +89,31 @@ app.use("/api", orderRoutes);
 app.use("/api", paymentRoutes);
 app.use("/api", newsletterRoutes);
 app.use("/api", contactRoutes);
-app.use("/api", userRoutes); // <-- new
+app.use("/api", userRoutes);
+
+// Health check endpoint (important for Railway)
+app.get("/health", (req, res) => {
+  res.status(200).json({ status: "ok", timestamp: new Date() });
+});
 
 // Root Route
 app.get("/", (req, res) => {
-  res.status(200).json({
-    success: true,
-    message: "🚀 ShopHub API Running Successfully",
-  });
+  res.status(200).json({ success: true, message: "🚀 ShopHub API Running Successfully" });
 });
 
 // 404 Handler
 app.use((req, res) => {
-  res.status(404).json({
-    success: false,
-    message: "API Route Not Found",
-  });
+  res.status(404).json({ success: false, message: "API Route Not Found" });
 });
 
 // Global Error Handler
 app.use((err, req, res, next) => {
   console.error(err);
-  res.status(err.statusCode || 500).json({
-    success: false,
-    message: err.message || "Internal Server Error",
-  });
+  res.status(err.statusCode || 500).json({ success: false, message: err.message || "Internal Server Error" });
 });
 
-// Start Server
+// Start Server - Bind to all interfaces (0.0.0.0) for Railway
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 Server running on port ${PORT} (${process.env.NODE_ENV || 'development'})`);
 });
